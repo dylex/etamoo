@@ -26,7 +26,7 @@ module MOO.Database (
 import Control.Applicative ((<$>))
 import Control.Concurrent.STM (STM, TVar, newTVarIO, newTVar,
                                readTVar, writeTVar)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, when, join, (<=<))
 import Data.IntSet (IntSet)
 import Data.Maybe (isJust)
 import Data.Monoid ((<>))
@@ -59,16 +59,13 @@ initDatabase = Database {
 }
 
 dbObjectRef :: ObjId -> Database -> Maybe (TVar (Maybe Object))
-dbObjectRef oid db
-  | oid < 0 || oid >= V.length objs = Nothing
-  | otherwise                       = Just (objs V.! oid)
-  where objs = objects db
+dbObjectRef oid = (V.!? oid) . objects
 
 dbObject :: ObjId -> Database -> STM (Maybe Object)
-dbObject oid db = maybe (return Nothing) readTVar $ dbObjectRef oid db
+dbObject oid db = join <$> mapM readTVar (dbObjectRef oid db)
 
 maxObject :: Database -> ObjId
-maxObject db = V.length (objects db) - 1
+maxObject = pred . V.length . objects
 
 resetMaxObject :: Database -> STM Database
 resetMaxObject db = do
@@ -98,15 +95,8 @@ renumber old db = do
       renumberObject obj old new db
 
       -- fix up ownerships throughout entire database
-      forM_ [0..maxObject db] $ \oid -> case dbObjectRef oid db of
-        Just ref -> do
-          maybeObj <- readTVar ref
-          case maybeObj of
-            Just obj -> do
-              maybeNew <- renumberOwnership old new obj
-              when (isJust maybeNew) $ writeTVar ref maybeNew
-            Nothing  -> return ()
-        Nothing  -> return ()
+      forM_ [0..maxObject db] $ \oid ->
+        maybeModifyObject oid db (renumberOwnership old new)
 
       -- renumber player references (if any)
       let db' = setPlayer (objectIsPlayer obj) new $ setPlayer False old db
@@ -135,15 +125,14 @@ deleteObject oid db =
     Just objTVar -> writeTVar objTVar Nothing
     Nothing      -> return ()
 
+maybeModifyObject :: ObjId -> Database -> (Object -> STM (Maybe Object)) -> STM ()
+maybeModifyObject oid db f =
+  forM_ (dbObjectRef oid db) $ \ref ->
+    readTVar ref >>= mapM_
+      (mapM_ (writeTVar ref . Just) <=< f)
+
 modifyObject :: ObjId -> Database -> (Object -> STM Object) -> STM ()
-modifyObject oid db f =
-  case dbObjectRef oid db of
-    Nothing      -> return ()
-    Just objTVar -> do
-      maybeObject <- readTVar objTVar
-      case maybeObject of
-        Nothing  -> return ()
-        Just obj -> writeTVar objTVar . Just =<< f obj
+modifyObject oid db = maybeModifyObject oid db . (fmap Just .)
 
 {-
 isPlayer :: ObjId -> Database -> Bool

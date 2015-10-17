@@ -108,7 +108,7 @@ executable etamoo
                        ForeignFunctionInterface
                        OverloadedStrings
 
-  extra-libraries:     pcre
+  pkgconfig-depends:   libpcre >= 8.30
   if !os(darwin)
     extra-libraries:   crypt
 

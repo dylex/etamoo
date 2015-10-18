@@ -72,6 +72,7 @@ import Data.HashMap.Strict (HashMap)
 import Data.Int (Int32, Int64)
 import Data.IntSet (IntSet)
 import Data.Map (Map)
+import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Lazy.Builder (Builder)
 import Data.Time (UTCTime)
@@ -84,7 +85,10 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.IntSet as IS
 import qualified Data.Map as M
 import qualified Data.Text as T
-import qualified Data.Text.Lazy.Builder as TLB
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Builder as TB
+import qualified Data.Text.Lazy.Builder.Int as TB
+import qualified Data.Text.Lazy.Builder.RealFloat as TB
 
 import {-# SOURCE #-} MOO.List (MOOList)
 import MOO.String (MOOString)
@@ -202,11 +206,11 @@ instance Ident MOOString where
   toId   = CI.mk . Str.toText
 
 instance Ident Builder where
-  fromId = TLB.fromText . CI.original
+  fromId = TB.fromText . CI.original
   toId   = error "Unsupported conversion from Builder to Id"
 
 string2builder :: StrT -> Builder
-string2builder = TLB.fromText . Str.toText
+string2builder = TB.fromText . Str.toText
 
 -- | A 'Value' represents any MOO value.
 data Value = Int IntT  -- ^ integer
@@ -356,18 +360,26 @@ toText (Obj x) = T.pack ('#' : show x)
 toText (Err x) = error2text x
 toText (Lst _) = "{list}"
 
+toLiteralBuilder :: Value -> Builder
+toLiteralBuilder (Lst x) = TB.singleton '{' <> lst (Lst.toList x) where
+  lst [x] = toLiteralBuilder x <> TB.singleton '}'
+  lst (x:l) = toLiteralBuilder x <> TB.singleton ',' <> lst l
+  lst [] = TB.singleton '}'
+toLiteralBuilder (Str x) = TB.singleton '"' <> T.foldr str (TB.singleton '"') (Str.toText x) where
+  str c = (escape c <>)
+  escape :: Char -> Builder
+  escape '"'  = "\\\""
+  escape '\\' = "\\\\"
+  escape c    = TB.singleton c
+toLiteralBuilder (Err x) = TB.fromString (show x)
+toLiteralBuilder (Int x) = TB.decimal x
+toLiteralBuilder (Flt x) = TB.realFloat x
+toLiteralBuilder (Obj x) = TB.singleton '#' <> TB.decimal x
+
 -- | Return a literal representation of the given MOO value, using the same
 -- rules as the @toliteral()@ built-in function.
 toLiteral :: Value -> Text
-toLiteral (Lst x) = T.concat ["{", T.intercalate ", " $
-                                   map toLiteral (Lst.toList x), "}"]
-toLiteral (Str x) = T.concat ["\"", T.concatMap escape $ Str.toText x, "\""]
-  where escape :: Char -> Text
-        escape '"'  = "\\\""
-        escape '\\' = "\\\\"
-        escape c    = T.singleton c
-toLiteral (Err x) = T.pack (show x)
-toLiteral v = toText v
+toLiteral = TL.toStrict . TB.toLazyText . toLiteralBuilder
 
 -- | Interpret a MOO value as a number of microseconds.
 toMicroseconds :: Value -> Maybe Integer

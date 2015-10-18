@@ -55,6 +55,7 @@ module MOO.String (
 
 import Control.Applicative ((<$>))
 import Data.ByteString (ByteString)
+import Data.ByteString.Internal (c2w, w2c)
 import Data.Char (isAscii, isPrint, isHexDigit, digitToInt, intToDigit)
 import Data.Function (on)
 import Data.Hashable (Hashable(hashWithSalt))
@@ -67,7 +68,11 @@ import Prelude hiding (tail, null, length, concat, concatMap, take, drop,
                        splitAt, break, words, unwords)
 
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Builder.Prim as BP
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Prelude
 
 import MOO.Builtins.Match (Regexp, newRegexp)
@@ -148,15 +153,10 @@ caseFold text
 
 -- | Encode a MOO /binary string/.
 encodeBinary :: ByteString -> Text
-encodeBinary = T.pack . Prelude.concatMap encode . BS.unpack
-  where encode :: Word8 -> String
-        encode b
-          | isAscii c && isPrint c && c /= '~' = [c]
-          | otherwise                          = ['~', hex q, hex r]
-          where n      = fromIntegral b
-                c      = toEnum n
-                (q, r) = n `divMod` 16
-                hex    = intToDigit
+encodeBinary = TE.decodeLatin1 . BSL.toStrict . BSB.toLazyByteString . BP.primMapByteStringBounded encode where
+  encode = BP.condB (\b -> b < 128 && let c = w2c b in isPrint c && c /= '~')
+    (BP.liftFixedToBounded BP.word8)
+    (BP.liftFixedToBounded $ (,) '~' BP.>$< BP.char8 BP.>*< BP.word8HexFixed)
 
 -- | Decode a MOO /binary string/ or return 'Nothing' if the string is
 -- improperly formatted.
@@ -170,9 +170,9 @@ decodeBinary = fmap BS.pack . decode . T.unpack
           (b :) <$> decode rest
         decode ('~':_) = Nothing
         decode (c:rest)
-          | isAscii c && isPrint c = (b :) <$> decode rest
-          | otherwise              = Nothing
-          where b = fromIntegral (fromEnum c)
+          | b < 128 && isPrint c = (b :) <$> decode rest
+          | otherwise            = Nothing
+          where b = c2w c
         decode [] = Just []
 
         fromHex :: Char -> Maybe Word8

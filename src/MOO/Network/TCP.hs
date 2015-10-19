@@ -14,7 +14,7 @@ import Control.Monad (forever)
 import Data.Maybe (fromMaybe)
 import Network.Socket (PortNumber, Socket, SockAddr,
                        SocketOption(ReuseAddr, KeepAlive),
-                       Family(AF_INET6), SocketType(Stream),
+                       SocketType(Stream),
                        AddrInfo(addrFlags, addrFamily, addrSocketType,
                                 addrProtocol, addrAddress),
                        AddrInfoFlag(AI_PASSIVE, AI_NUMERICSERV,
@@ -39,7 +39,6 @@ serverAddrInfo host port =
   let hints = defaultHints {
           addrFlags      = [AI_PASSIVE, AI_NUMERICSERV,
                             AI_ADDRCONFIG, AI_V4MAPPED]
-        , addrFamily     = AF_INET6
         , addrSocketType = Stream
         }
   in getAddrInfo (Just hints) host (Just $ show port)
